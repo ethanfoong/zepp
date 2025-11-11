@@ -1,0 +1,14 @@
+# Core dependencies
+numpy
+pandas
+geopandas
+matplotlib
+scipy
+requests
+beautifulsoup4
+folium
+fiona
+
+# Cartopy and visualization
+cartopy
+
