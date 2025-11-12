@@ -1,15 +1,16 @@
-**Prof. Zeppetello Research & Carbon Cycle Dynamics**
+**Extreme Coastal Climatology Research**
+**Led by UC Berkeley Prof. Zeppetello**
 
-This repository contains tools, analyses, and data workflows developed as part Prof. Zeppetello's research on extreme coastal temperature variations. The project focuses on understanding and modeling variations in the carbon cycle through data-driven analysis, atmospheric measurements, and environmental datasets.
+This repository contains tools, analyses, and data workflows developed as part of Prof. Zeppetello’s research on extreme coastal temperature variations. The project focuses on understanding and modeling long-term global climatological extremes, particularly those affecting coastal environments, through data-driven statistical analysis, land-based observations, and oceanic buoy measurements.
 
 **Project Overview**
 
 The project integrates multiple research and computational components to:
 
-- Process, clean, and harmonize large environmental datasets (e.g., meteorological, atmospheric, and carbon flux data).
+Process, clean, and harmonize large environmental datasets (e.g., meteorological, atmospheric, and oceanographic data).
 
-- Analyze temporal dynamics in carbon cycle indicators using statistical and data-driven techniques.
+Quantify and analyze temporal trends in extreme temperature and climate indicators using statistical and machine learning techniques.
 
-- Automate data diagnostics, completeness evaluation, and visualization of key variables across time.
+Automate data diagnostics, completeness evaluation, and visualization of key variables over time and across spatial scales.
 
-- Support reproducible and extensible workflows for ongoing carbon cycle research.
+Enable reproducible and extensible workflows for long-term climate research focused on coastal and marine interfaces.
