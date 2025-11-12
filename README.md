@@ -1,6 +1,6 @@
 **Prof. Zeppetello Research & Carbon Cycle Dynamics**
 
-This repository contains tools, analyses, and data workflows developed as part of the Carbon Cycle Dynamics research led by Prof. Zeppetello. The project focuses on understanding and modeling variations in the carbon cycle through data-driven analysis, atmospheric measurements, and environmental datasets.
+This repository contains tools, analyses, and data workflows developed as part Prof. Zeppetello's research on extreme coastal temperature variations. The project focuses on understanding and modeling variations in the carbon cycle through data-driven analysis, atmospheric measurements, and environmental datasets.
 
 **Project Overview**
 
