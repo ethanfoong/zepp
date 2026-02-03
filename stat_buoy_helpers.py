@@ -282,6 +282,114 @@ def compare_stations_variance(station_data, stations=None, figsize_per_col=3.5):
     plt.show()
 
 
+def write_warm_season_netcdf(df, station_id, out_dir="nc", window_size=50, target_days=None):
+    """
+    Create a NetCDF file of warm-season anomalies for a station.
+
+    Parameters
+    ----------
+    df : DataFrame
+        DataFrame returned by `load_station` / `load_station_full` with columns
+        ['date','year','day_of_year','ATMP']
+    station_id : str
+        Station identifier used for filename and metadata
+    out_dir : str
+        Directory to write NetCDF files to
+    window_size : int
+        Days on each side of the climatological peak to define warm season
+    target_days : int or None
+        If provided, the output will be padded/truncated to this many days.
+        If None, uses the actual warm-season length (warm_end - warm_start + 1).
+
+    Returns
+    -------
+    filepath : str
+        Path to the written NetCDF file
+    """
+    import os
+    os.makedirs(out_dir, exist_ok=True)
+
+    anomalies, mean_cycle, (warm_start, warm_center, warm_end) = compute_warm_season_anomalies(df, window_size)
+
+    # anomalies: index = day_of_year (warm days), columns = years
+    warm_days = anomalies.index.to_numpy()
+    years = anomalies.columns.to_numpy()
+
+    n_days = len(warm_days)
+    if target_days is None:
+        target_days = n_days
+
+    # Build array shape (n_years, target_days)
+    data = np.full((len(years), target_days), np.nan, dtype=np.float32)
+
+    # Center the warm_days into the target_days window if sizes differ
+    if n_days <= target_days:
+        # place warm_days centered
+        start = (target_days - n_days) // 2
+        for i, yr in enumerate(years):
+            row = anomalies[yr].reindex(warm_days).to_numpy()
+            data[i, start:start + n_days] = row
+        day_coords = np.arange(start, start + target_days)
+    else:
+        # truncate: take centered slice of warm_days to fit target_days
+        start_idx = (n_days - target_days) // 2
+        selected_days = warm_days[start_idx:start_idx + target_days]
+        for i, yr in enumerate(years):
+            row = anomalies[yr].reindex(selected_days).to_numpy()
+            data[i, :] = row
+        warm_days = selected_days
+
+    # Build coordinates
+    years_coord = years.astype(int)
+    days_coord = np.arange(target_days)
+
+    # Try using xarray for convenience, fall back to netCDF4
+    fname = os.path.join(out_dir, f"{station_id}_warm_anomalies_{len(years)}y_{target_days}d.nc")
+    try:
+        import xarray as xr
+        ds = xr.Dataset(
+            {
+                'anomalies': (('year', 'day'), (data)),
+            },
+            coords={
+                'year': years_coord,
+                'day': days_coord,
+                'warm_day_of_year': (('day',), np.arange(warm_start, warm_start + target_days) if n_days <= target_days else warm_days),
+            },
+            attrs={
+                'station_id': station_id,
+                'warm_start': int(warm_start),
+                'warm_center': int(warm_center),
+                'warm_end': int(warm_end),
+                'window_size': int(window_size),
+            }
+        )
+        ds.to_netcdf(fname)
+    except Exception:
+        # fallback using netCDF4
+        try:
+            from netCDF4 import Dataset
+            nc = Dataset(fname, 'w')
+            nc.createDimension('year', data.shape[0])
+            nc.createDimension('day', data.shape[1])
+            years_var = nc.createVariable('year', 'i4', ('year',))
+            day_var = nc.createVariable('day', 'i4', ('day',))
+            anom_var = nc.createVariable('anomalies', 'f4', ('year', 'day'), fill_value=np.nan)
+            years_var[:] = years_coord
+            day_var[:] = days_coord
+            anom_var[:, :] = data
+            nc.station_id = station_id
+            nc.warm_start = int(warm_start)
+            nc.warm_center = int(warm_center)
+            nc.warm_end = int(warm_end)
+            nc.window_size = int(window_size)
+            nc.close()
+        except Exception as e:
+            raise RuntimeError(f"Failed to write NetCDF file: {e}")
+
+    return fname
+
+
 
 #################### "visualization helpers" ########################
 

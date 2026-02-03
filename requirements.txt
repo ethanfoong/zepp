@@ -6,6 +6,9 @@ matplotlib
 scipy
 requests
 beautifulsoup4
+# Added for NetCDF export and xarray support
+xarray
+netCDF4
 folium
 fiona
 
