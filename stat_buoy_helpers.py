@@ -11,55 +11,73 @@ from urllib.parse import urljoin
 
 BASE = "https://www.ndbc.noaa.gov/data/historical/stdmet/"
 
+"""tackling leap years 
+
+if lat > 0: northern hemisphere 
+
+if year %4 == 0 and (year != 1900):
+    is_leap = True
+    delete T[59] #remove Feb 29
+
+if lat < 0: southern hemisphere
+    if year %4 == 0 and year != 1900:
+    delete T[59 + 182] #halfway through the year 
+
+#simpler solution get rid of july 1st 
+
+high resolution cmip6 
+
+kilometer scale climate models
+
+"""
+
+
+def _drop_leap_day(df):
+    """Remove Feb 29 (day 60) only for leap years (divisible by 4, except centuries not divisible by 400)."""
+    if "day_of_year" in df.columns and "year" in df.columns:
+        is_leap_year = (df['year'] % 4 == 0) & ((df['year'] % 100 != 0) | (df['year'] % 400 == 0))
+        return df[~((df['day_of_year'] == 60) & is_leap_year)]
+    return df
+
+
 #################### seasonal cycle helpers ########################
 
 def plot_dailymax_seasonal_cycle(df, station, warm_season_window=50):
     """
     Plot seasonal temperature cycle using daily maximum ATMP.
-    
-    Parameters:
-        df : DataFrame (from load_station_full)
-            Must contain columns ['year', 'day_of_year', 'ATMP']
-        station : str
-            NDBC station ID
-        warm_season_window : int, optional
-            Days on each side of the climatological max to define 'warm season'
     """
+
+    df = _drop_leap_day(df)
     # --- Compute daily maxima per year ---
     daily_max = df.groupby(["year", "day_of_year"])["ATMP"].max().reset_index()
 
     # Pivot to shape (365 x n_years)
     pivot = daily_max.pivot(index="day_of_year", columns="year", values="ATMP")
 
-    # --- Multi-year climatology (red line) ---
-    mean_cycle = pivot.mean(axis=1)   # daily mean of yearly maxes
-    std_cycle = pivot.std(axis=1)     # variability envelope
+    mean_cycle = pivot.mean(axis=1)   
+    std_cycle = pivot.std(axis=1)     
 
-    # --- Determine dynamic warm-season window ---
     warm_center = int(mean_cycle.idxmax())   # day-of-year of climatological max
     warm_start = max(warm_center - warm_season_window, 1)
     warm_end = min(warm_center + warm_season_window, 365)
 
     print(f" Warm season for {station}: Days {warm_start}–{warm_end} (centered at {warm_center})")
 
-    # --- Plot setup ---
     plt.figure(figsize=(10, 6))
 
-    # Plot each year's daily max pattern (thin black lines)
     for y in pivot.columns:
         plt.plot(pivot.index, pivot[y], color="black", alpha=0.25, linewidth=0.6)
 
-    # Plot climatological daily max mean (red line)
+    # climatological daily max mean (red line)
     plt.plot(mean_cycle.index, mean_cycle, color="red", linewidth=2.5, label="Mean Seasonal Cycle")
 
-    # --- Highlight warm season dynamically ---
+    # warm season highlights
     plt.axvspan(warm_start, warm_end, color="lightblue", alpha=0.15, label="Warm Season")
     plt.axvline(warm_start, color="blue", linestyle="--", alpha=0.6)
     plt.axvline(warm_end, color="blue", linestyle="--", alpha=0.6)
     plt.text(warm_center, plt.ylim()[0] + 1, "Warm Season", color="blue",
              ha="center", va="bottom", fontsize=11)
 
-    # --- Aesthetics ---
     plt.title(f"NDBC {station}: Seasonal Cycle of Daily Max Air Temperature (ATMP)")
     plt.xlabel("Day of Year")
     plt.ylabel("Daily Maximum Air Temperature [°C]")
@@ -73,21 +91,8 @@ def plot_dailymax_seasonal_cycle(df, station, warm_season_window=50):
 def get_warm_season_data(df, window_size=50):
     """
     Identify and extract warm season data based on climatological maximum.
-
-    Parameters
-    ----------
-    df : DataFrame
-        Must contain columns ['year', 'day_of_year', 'ATMP']
-    window_size : int
-        Number of days on each side of the climatological max to include
-
-    Returns
-    -------
-    warm_season_df : DataFrame
-        Subset of the input dataframe with only warm season days
-    warm_period : tuple
-        (warm_start, warm_center, warm_end)
     """
+    df = _drop_leap_day(df)
     # compute the multi-year daily mean using daily maxima
     daily_max = df.groupby(["year", "day_of_year"])['ATMP'].max().reset_index()
     daily_mean = daily_max.groupby('day_of_year')['ATMP'].mean()
@@ -105,12 +110,8 @@ def get_warm_season_data(df, window_size=50):
 def compute_warm_season_anomalies(df, window_size=50):
     """
     Compute anomaly pivot table restricted to the warm season.
-
-    Returns (anomalies, mean_cycle, warm_period)
-    - anomalies: DataFrame indexed by day_of_year, columns=years
-    - mean_cycle: Series daily climatology for the warm season
-    - warm_period: (start, center, end)
     """
+
     warm_df, (warm_start, warm_center, warm_end) = get_warm_season_data(df, window_size)
     daily_maxes = warm_df.groupby(['year', 'day_of_year'])['ATMP'].max().reset_index()
     pivot = daily_maxes.pivot(index='day_of_year', columns='year', values='ATMP')
@@ -147,14 +148,12 @@ def plot_warm_season_time_series(df, station, window_size=50):
     anomalies, mean_cycle, (warm_start, warm_center, warm_end) = compute_warm_season_anomalies(df, window_size)
     yearly_anom = anomalies.mean(axis=0)
     
-    # Calculate skewness
     from scipy.stats import skew
     skewness = skew(yearly_anom.dropna())
 
-    # Create figure with two subplots side by side
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # Left plot: Time series
+
+    #time series of anomalies
     ax1.plot(yearly_anom.index, yearly_anom.values, marker='o', color='darkorange', linewidth=2)
     ax1.axhline(0, color='black', lw=1)
     ax1.set_xlabel("Year")
@@ -162,7 +161,7 @@ def plot_warm_season_time_series(df, station, window_size=50):
     ax1.set_title(f"NDBC {station}: Warm Season Temperature Anomalies\n(Days {warm_start}-{warm_end}, Peak: {warm_center})")
     ax1.grid(True, alpha=0.3)
     
-    # Right plot: KDE distribution showing skewness
+    # KDE distribution showing skewness
     ax2.hist(yearly_anom.dropna(), bins=15, density=True, alpha=0.6, color='lightcoral', edgecolor='black', label='Histogram')
     
     # KDE plot
@@ -173,7 +172,7 @@ def plot_warm_season_time_series(df, station, window_size=50):
         x_range = np.linspace(data.min() - 0.5, data.max() + 0.5, 200)
         ax2.plot(x_range, kde(x_range), 'b-', linewidth=2, label='KDE')
         
-        # Mark mean and median to show skewness
+        # pinpointing mean and median
         mean_val = data.mean()
         median_val = data.median()
         ax2.axvline(mean_val, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.3f}°C')
@@ -191,17 +190,16 @@ def plot_warm_season_time_series(df, station, window_size=50):
 
 def _compute_yearly_var_skew_from_df(df):
     """
-    Helper: compute yearly variance and skew of daily-max ATMP following the
-    template used in the notebook: pivot daily maxima to (day_of_year x year)
+    compute yearly variance and skew of daily-max ATMP 
+    based on pivot daily maxima to (day_of_year x year)
     then compute variance and skew per year.
-
-    Returns: (all_years, yearly_var, yearly_skew)
     """
-    # Pivot daily maxima
+    df = _drop_leap_day(df)
+    # pivot on daily maxima
     daily_maxes = df.groupby(['year', 'day_of_year'])['ATMP'].max().reset_index()
     pivot = daily_maxes.pivot(index='day_of_year', columns='year', values='ATMP')
 
-    # Years present
+    # all years 
     years = pivot.columns.tolist()
     if not years:
         return None, None, None
@@ -220,19 +218,6 @@ def _compute_yearly_var_skew_from_df(df):
 def compare_stations_variance(station_data, stations=None, figsize_per_col=3.5):
     """
     Compare seasonal variance and skew across multiple stations side-by-side.
-
-    Layout: 2 rows x N columns, where top row shows yearly variance and bottom row
-    shows yearly skewness for each station. Columns correspond to stations.
-
-    Parameters
-    ----------
-    station_data : dict
-        Mapping station_id -> DataFrame (as returned by load_station_full)
-    stations : list or None
-        List of station IDs (keys of station_data) in the order to plot. If None,
-        plot all keys in station_data.
-    figsize_per_col : float
-        Width in inches per column (controls overall figure width)
     """
     if stations is None:
         stations = list(station_data.keys())
@@ -285,26 +270,6 @@ def compare_stations_variance(station_data, stations=None, figsize_per_col=3.5):
 def write_warm_season_netcdf(df, station_id, out_dir="nc", window_size=50, target_days=None):
     """
     Create a NetCDF file of warm-season anomalies for a station.
-
-    Parameters
-    ----------
-    df : DataFrame
-        DataFrame returned by `load_station` / `load_station_full` with columns
-        ['date','year','day_of_year','ATMP']
-    station_id : str
-        Station identifier used for filename and metadata
-    out_dir : str
-        Directory to write NetCDF files to
-    window_size : int
-        Days on each side of the climatological peak to define warm season
-    target_days : int or None
-        If provided, the output will be padded/truncated to this many days.
-        If None, uses the actual warm-season length (warm_end - warm_start + 1).
-
-    Returns
-    -------
-    filepath : str
-        Path to the written NetCDF file
     """
     import os
     os.makedirs(out_dir, exist_ok=True)
@@ -390,6 +355,83 @@ def write_warm_season_netcdf(df, station_id, out_dir="nc", window_size=50, targe
     return fname
 
 
+def read_netcdf_statistics(netcdf_path, station_id):
+    """
+    Read a NetCDF file and compute variance and skewness statistics.
+    
+    Parameters
+    ----------
+    netcdf_path : str
+        Path to the NetCDF file
+    station_id : str
+        Station ID (for reference)
+    
+    Returns
+    -------
+    dict : Contains mean_variance and mean_skewness
+    """
+    # Load NetCDF data with dual library support
+    try:
+        import xarray as xr
+        ds = xr.open_dataset(netcdf_path)
+        anom_data = ds['anomalies'].values
+        ds.close()
+    except Exception:
+        try:
+            from netCDF4 import Dataset
+            nc = Dataset(netcdf_path, 'r')
+            anom_data = nc['anomalies'][:]
+            nc.close()
+        except Exception as e:
+            raise RuntimeError(f"Failed to read NetCDF file {netcdf_path}: {e}")
+    
+    # Validate data shape and content
+    if anom_data.size == 0:
+        raise ValueError(f"Empty anomalies array in {netcdf_path}")
+    
+    if anom_data.ndim != 2:
+        raise ValueError(f"Expected 2D array (years, days), got shape {anom_data.shape}")
+    
+    n_years, n_days = anom_data.shape
+    
+    # Check that we have sufficient non-NaN data
+    total_valid = np.sum(~np.isnan(anom_data))
+    if total_valid == 0:
+        raise ValueError(f"No valid (non-NaN) data in {netcdf_path}")
+    
+    # Compute yearly variance (across days, per year)
+    # axis=1 means variance computed across columns (days) for each row (year)
+    yearly_var = np.nanvar(anom_data, axis=1)
+    mean_variance = np.nanmean(yearly_var)
+    
+    # Compute yearly skewness (across days, per year)
+    # Require at least 10 valid data points for reliable skewness estimation
+    yearly_skew = np.full(n_years, np.nan)
+    for i in range(n_years):
+        year_data = anom_data[i, :]
+        valid_data = year_data[~np.isnan(year_data)]
+        
+        if len(valid_data) >= 10:  # Minimum 10 points for reliable skewness
+            yearly_skew[i] = skew(valid_data, nan_policy='omit')
+    
+    mean_skewness = np.nanmean(yearly_skew)
+    
+    # Validation: ensure we got valid statistics
+    if np.isnan(mean_variance) or np.isinf(mean_variance):
+        raise ValueError(f"Invalid variance computed for {station_id}: {mean_variance}")
+    
+    if np.isnan(mean_skewness):
+        # This is acceptable if no years had sufficient data, but warn
+        import warnings
+        warnings.warn(f"Could not compute skewness for {station_id} (insufficient data per year)")
+        mean_skewness = 0.0  # Default to symmetric distribution
+    
+    return {
+        'mean_variance': mean_variance,
+        'mean_skewness': mean_skewness
+    }
+
+
 
 #################### "visualization helpers" ########################
 
@@ -402,6 +444,7 @@ def plot_heatmap(df, station):
         df : DataFrame (from load_station_full)
         station : str, station ID
     """
+    df = _drop_leap_day(df)
     # Calculate daily maxes and pivot
     daily_maxes = df.groupby(['year', 'day_of_year'])['ATMP'].max().reset_index()
     pivot = daily_maxes.pivot(index='day_of_year', columns='year', values='ATMP')
@@ -430,6 +473,7 @@ def plot_time_series_anomalies(df, station):
         df : DataFrame (from load_station_full)
         station : str, station ID
     """
+    df = _drop_leap_day(df)
     # Calculate daily maxes and pivot
     daily_maxes = df.groupby(['year', 'day_of_year'])['ATMP'].max().reset_index()
     pivot = daily_maxes.pivot(index='day_of_year', columns='year', values='ATMP')
@@ -457,6 +501,7 @@ def plot_variance(df, station):
         df : DataFrame (from load_station_full)
         station : str, station ID
     """
+    df = _drop_leap_day(df)
     # Calculate daily statistics
     daily_stats = df.groupby('day_of_year')['ATMP'].agg(['mean', 'std']).reset_index()
     
@@ -489,6 +534,7 @@ def plot_variance_skew(df, station):
         df : DataFrame (from load_station_full)
         station : str, station ID
     """
+    df = _drop_leap_day(df)
     # Calculate monthly statistics
     df['month'] = pd.to_datetime(df['date']).dt.month
     monthly_stats = df.groupby('month')['ATMP'].agg(['mean', 'std', lambda x: skew(x.dropna())]).reset_index()

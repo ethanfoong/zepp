@@ -1,49 +1,91 @@
-"""
-Comprehensive NDBC Buoy Pipeline
-=================================
-Downloads all NDBC buoy data with 5+ years, processes to NetCDF, and visualizes on Cartopy maps.
-
-Usage:
-  python scripts/complete_buoy_pipeline.py
-"""
-
 import os
 import sys
 import re
 import time
-import requests
 import pandas as pd
 import numpy as np
 import pickle
 import cartopy
-from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from scipy.stats import skew
 from datetime import datetime
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from matplotlib.colors import Normalize, TwoSlopeNorm
 
-# Import helpers from workspace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data_buoy_helpers import list_station_files, load_station
-from stat_buoy_helpers import write_warm_season_netcdf, get_warm_season_data, compute_warm_season_anomalies
+from data_buoy_helpers import list_station_files, list_all_station_ids, load_station, parse_station_table, load_station_locations
+from stat_buoy_helpers import write_warm_season_netcdf, get_warm_season_data, compute_warm_season_anomalies, read_netcdf_statistics
 
-# Configuration
+'''average biggest/ and smallest anomaly in buoy time series
+
+
+
+'''
+
+
 BASE_URL = "https://www.ndbc.noaa.gov/data/historical/stdmet/"
 CACHE_DIR = "cache"
 NC_DIR = "nc"
 FIGURES_DIR = "figures"
 RESULTS_FILE = os.path.join(CACHE_DIR, "complete_buoy_analysis.pkl")
+TARGET_VALID_BUOYS = 120
+LOCATION_CACHE_FILE = os.path.join(CACHE_DIR, "buoy_locations.json")
 
-# Create directories
 for d in [CACHE_DIR, NC_DIR, FIGURES_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# Known station locations
+# Helper functions (defined first, before initialization)
+def _get_location_from_dict(station_id, locations_dict):
+    """Internal: Get location with case-insensitive lookup"""
+    station_lower = station_id.lower()
+    station_upper = station_id.upper()
+    
+    if station_lower in locations_dict:
+        return locations_dict[station_lower]
+    elif station_upper in locations_dict:
+        return locations_dict[station_upper]
+    elif station_id in locations_dict:
+        return locations_dict[station_id]
+    return None
+
+
+# Initialize station locations from NDBC station table
+def initialize_station_locations():
+    """Load or fetch all NDBC station locations (only downloads if cache missing)"""
+    # Check if cache exists - if so, just load it (no download)
+    if os.path.exists(LOCATION_CACHE_FILE):
+        locations = load_station_locations(LOCATION_CACHE_FILE)
+        if locations:
+            print(f"[CACHE] Loaded {len(locations)} station locations from cache")
+            return locations
+        else:
+            print("[WARN] Cache file exists but is empty/corrupted, re-downloading...")
+    
+    # Only reaches here if cache doesn't exist or is corrupted
+    print("[FETCH] Downloading station table from NDBC (first run only)...")
+    locations = parse_station_table(output_json=LOCATION_CACHE_FILE)
+    print(f"[CACHE] Saved {len(locations)} locations for future runs")
+    return locations
+
+# Load persistent location cache if it exists
+def load_location_cache():
+    """Load buoy locations from cached JSON file (legacy function for compatibility)"""
+    return load_station_locations(LOCATION_CACHE_FILE) if os.path.exists(LOCATION_CACHE_FILE) else {}
+
+def save_location_cache(locations):
+    """Save buoy locations to JSON file for future runs"""
+    try:
+        import json
+        with open(LOCATION_CACHE_FILE, 'w') as f:
+            json.dump(locations, f, indent=2)
+    except:
+        pass
+
+# Hardcoded locations (fallback for commonly used buoys)
 BUOY_LOCATIONS = {
     '46001': (56.300, -148.020), '46002': (42.566, -130.487), '46003': (51.333, -155.978),
     '46005': (46.089, -131.018), '46006': (40.776, -137.475), '46011': (34.883, -120.862),
@@ -63,54 +105,77 @@ BUOY_LOCATIONS = {
     '46094': (57.486, -153.859), '46097': (47.208, -124.731), '46098': (45.138, -124.712),
 }
 
+# Load all station locations at startup (merge with hardcoded fallbacks)
+ALL_STATION_LOCATIONS = initialize_station_locations()
+BUOY_LOCATIONS.update(ALL_STATION_LOCATIONS)  # Merge: cached locations override hardcoded ones
+
+# Public API functions (use global BUOY_LOCATIONS)
+def get_buoy_location(station_id):
+    """Get buoy location from pre-loaded dictionary"""
+    return _get_location_from_dict(station_id, BUOY_LOCATIONS)
+
+
+def is_west_coast_buoy(station_id):
+    """Check if buoy is on US West Coast (CA, OR, WA)"""
+    location = get_buoy_location(station_id)
+    if not location:
+        return False
+    
+    lat, lon = location
+    
+    # US West Coast bounds:
+    # Latitude: 30°N to 50°N (Southern CA to WA/Canada border)
+    # Longitude: -130°W to -115°W (Pacific coast)
+    return (30.0 <= lat <= 50.0) and (-130.0 <= lon <= -115.0)
+
+# Count West Coast buoys
+west_coast_count = sum(1 for sid in BUOY_LOCATIONS if is_west_coast_buoy(sid))
+print(f"[OK] Total buoy locations available: {len(BUOY_LOCATIONS)}")
+print(f"[OK] US West Coast buoys available: {west_coast_count}\n")
+
 print("""
 =======================================================================
          NDBC Buoy Comprehensive Analysis Pipeline
                                                                    
-  Processing all buoys with 5+ years of temperature data           
+  Utilizing all buoys with 5+ years of ATMP data          
   Creating NetCDF files and Cartopy visualizations                 
 =======================================================================
 """)
 
 
-def discover_all_buoys_robust():
-    """Discover all available NDBC buoys"""
-    print("\n[1/5] DISCOVERING AVAILABLE BUOYS")
+def discover_all_buoys_robust(west_coast_only=True):
+    print("\nP1: DISCOVERING AVAILABLE BUOYS")
     print("=" * 60)
-    
+
     try:
-        print("Fetching NDBC historical stdmet directory...")
-        r = requests.get(BASE_URL, timeout=120)
-        r.raise_for_status()
+        all_buoys = list_all_station_ids(BASE_URL)
+        print("\n Discovered {} unique NDBC buoy stations".format(len(all_buoys)))
         
-        print("Parsing HTML to extract buoy station IDs...")
-        soup = BeautifulSoup(r.text, 'html.parser')
+        if west_coast_only:
+            print("\n Filtering for US West Coast buoys (30-50°N, 130-115°W)...")
+            west_coast_buoys = [b for b in all_buoys if is_west_coast_buoy(b)]
+            print(" Found {} West Coast buoys ({}% of total)".format(
+                len(west_coast_buoys), 
+                int(100 * len(west_coast_buoys) / len(all_buoys)) if all_buoys else 0
+            ))
+            return west_coast_buoys
         
-        buoy_pattern = re.compile(r'^(\d{5}|[a-z0-9]{5})h\d{4}\.txt\.gz$', re.IGNORECASE)
-        buoys = set()
-        
-        links = soup.find_all('a', href=True)
-        print("Processing {} links...".format(len(links)))
-        
-        for a in links:
-            href = a['href']
-            match = buoy_pattern.match(href)
-            if match:
-                buoys.add(match.group(1).lower())
-        
-        buoys = sorted(buoys)
-        print("\n[OK] Found {} unique NDBC buoy stations".format(len(buoys)))
-        return buoys
-    
+        return all_buoys
     except Exception as e:
-        print("\n[ERROR] discovering buoys: {}".format(e))
+        print("\n error occurred in discovering buoys: {}".format(e))
         return []
 
 
-def count_buoy_years(station_id):
-    """Count available years for a buoy"""
+def count_buoy_years(station_id, cached_urls=None):
+    """available years for a buoy (uses cached URL list if provided)"""
     try:
-        urls = list_station_files(station_id)
+        if cached_urls is None:
+            urls = list_station_files(station_id)
+        else:
+            # Filter cached URLs for this station instead of re-scraping
+            station_prefix = station_id.lower() + "h"
+            urls = [u for u in cached_urls if station_prefix in u.lower()]
+        
         year_pattern = re.compile(r'(\d{4})\.txt\.gz')
         years = set()
         
@@ -124,17 +189,39 @@ def count_buoy_years(station_id):
         return station_id, 0
 
 
-def filter_buoys_by_years(all_buoys, min_years=5, max_workers=10):
-    """Filter buoys to those with min_years or more of data"""
-    print("\n[2/5] FILTERING BUOYS BY DATA AVAILABILITY")
+def filter_buoys_by_years(all_buoys, min_years=5, target_count=None, max_workers=10):
+    """filter buoys to those with min_years or more of data"""
+    print("\n P2: FILTERING BUOYS BY DATA AVAILABILITY")
     print("=" * 60)
-    print("Checking {} buoys for {}+ years of data...\n".format(len(all_buoys), min_years))
+    if target_count is None:
+        print("Checking buoys for {}+ years of data (processing all matches)...\n".format(min_years))
+    else:
+        print("Checking buoys for {}+ years of data (target: {} buoys)...\n".format(min_years, target_count))
+    print("Caching NDBC directory listing (downloading once)...")
+    
+    # Download the directory listing ONCE instead of for each buoy
+    import requests
+    from bs4 import BeautifulSoup
+    try:
+        r = requests.get(BASE_URL, timeout=120)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        cached_urls = []
+        for a in soup.find_all("a", href=True):
+            h = a["href"].lower()
+            if h.endswith(".txt.gz"):
+                from urllib.parse import urljoin
+                cached_urls.append(urljoin(BASE_URL, h))
+        print("[OK] Cached {} total NDBC files\n".format(len(cached_urls)))
+    except Exception as e:
+        print("[WARN] Failed to cache directory: {}\n".format(e))
+        cached_urls = None
     
     valid_buoys = {}
     processed = 0
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(count_buoy_years, buoy): buoy for buoy in all_buoys}
+        futures = {executor.submit(count_buoy_years, buoy, cached_urls): buoy for buoy in all_buoys}
         
         for future in as_completed(futures):
             station_id, num_years = future.result()
@@ -142,60 +229,68 @@ def filter_buoys_by_years(all_buoys, min_years=5, max_workers=10):
             
             if num_years >= min_years:
                 valid_buoys[station_id] = num_years
-                status = "[OK] {}: {} years".format(station_id, num_years)
+                print("[{:4d}/{}] ACCEPTED: {} ({} years of data)".format(processed, len(all_buoys), station_id, num_years))
             else:
-                status = "[SKIP] {}: {} years (insufficient)".format(station_id, num_years)
+                print("[{:4d}/{}] SKIPPED:  {} (only {} years - need {}+)".format(processed, len(all_buoys), station_id, num_years, min_years))
             
-            if processed % 10 == 0:
-                print("[{}/{}] {}".format(processed, len(all_buoys), status))
+            if target_count is not None and len(valid_buoys) >= target_count:
+                print("\n[OK] Found {} buoys with {}+ years of data. Stopping search.".format(target_count, min_years))
+                break
     
-    print("\n[OK] Found {} buoys with {}+ years of data".format(len(valid_buoys), min_years))
+    print()  # newline after progress bar
     
-    years_list = sorted(valid_buoys.values(), reverse=True)
-    print("\nYear distribution:")
-    print("  Max: {} years".format(years_list[0]))
-    print("  Min: {} years".format(years_list[-1]))
-    print("  Mean: {:.1f} years".format(np.mean(years_list)))
+    print("\nFound {} buoys with {}+ years of data".format(len(valid_buoys), min_years))
+    
+    if valid_buoys:
+        years_list = sorted(valid_buoys.values(), reverse=True)
+        print("\nYear distribution:")
+        print("  Max: {} years".format(years_list[0]))
+        print("  Min: {} years".format(years_list[-1]))
+        print("  Mean: {:.1f} years".format(np.mean(years_list)))
     
     return valid_buoys
+
+
+def select_first_buoys(valid_buoys, first_n=10):
+    if not valid_buoys:
+        return {}
+    first_items = list(valid_buoys.items())[:first_n]
+    return dict(first_items)
 
 
 def process_single_buoy_to_netcdf(station_id, window_size=100):
     """Process a single buoy to NetCDF"""
     try:
-        print("\n  [PROC] Processing {}...".format(station_id), end=" ")
+        print("\n Processing {}...".format(station_id), end=" ")
         sys.stdout.flush()
+        
+        # Check location FIRST before processing data
+        location = get_buoy_location(station_id)
+        if not location:
+            print("FAIL: Location not found for '{}' (ID format: lowercase='{}', check cache)".format(
+                station_id, station_id.lower()))
+            return None
         
         df_filled, completeness = load_station(station_id, workers=4, cache_dir=CACHE_DIR)
         
         if df_filled is None or df_filled.empty:
-            print("[FAIL] No data loaded")
+            print("FAIL: No data loaded")
             return None
         
         year_start = int(df_filled['year'].min())
         year_end = int(df_filled['year'].max())
         num_years = year_end - year_start + 1
         
-        location = BUOY_LOCATIONS.get(station_id)
-        if not location:
-            print("[FAIL] Location unknown")
-            return None
-        
         nc_path = write_warm_season_netcdf(
             df_filled, station_id,
             out_dir=NC_DIR,
             window_size=window_size,
-            target_days=100
+            target_days=None  # Keep all warm season days (no truncation)
         )
         
-        warm_df, (ws, wc, we) = get_warm_season_data(df_filled, window_size=window_size)
-        anomalies, _, _ = compute_warm_season_anomalies(df_filled, window_size=window_size)
-        
-        yearly_var = anomalies.var(axis=0)
-        yearly_skew = anomalies.apply(lambda col: skew(col.dropna()) if col.notna().sum() > 3 else np.nan, axis=0)
-        
-        mean_variance = yearly_var.mean()
-        mean_skewness = yearly_skew.mean()
+        stats = read_netcdf_statistics(nc_path, station_id)
+        mean_variance = stats['mean_variance']
+        mean_skewness = stats['mean_skewness']
         
         result = {
             'station_id': station_id,
@@ -209,7 +304,7 @@ def process_single_buoy_to_netcdf(station_id, window_size=100):
             'netcdf_path': nc_path,
         }
         
-        print("[OK] NetCDF written")
+        print("NetCDF written and statistics extracted from file")
         return result
     
     except Exception as e:
@@ -219,7 +314,7 @@ def process_single_buoy_to_netcdf(station_id, window_size=100):
 
 def process_all_buoys(valid_buoys, window_size=100):
     """Process all valid buoys"""
-    print("\n[3/5] PROCESSING BUOYS TO NETCDF")
+    print("\n P3: PROCESSING BUOYS TO NETCDF")
     print("=" * 60)
     
     results = []
@@ -248,16 +343,16 @@ def save_results(results):
     print("[SAVE] Results saved to {}".format(RESULTS_FILE))
 
 
-def plot_cartopy_maps(results):
+def plot_cartopy_maps(results, window_size=100):
     """Create Cartopy maps"""
-    print("\n[4/5] CREATING CARTOPY WORLD MAPS")
+    print("\n P4: CREATING CARTOPY WORLD MAPS")
     print("=" * 60)
     
     df = pd.DataFrame(results)
     df = df.dropna(subset=['latitude', 'longitude'])
     
     if len(df) == 0:
-        print("[ERROR] No data to plot")
+        print("No data to plot")
         return None
     
     print("Plotting {} stations...".format(len(df)))
@@ -265,7 +360,6 @@ def plot_cartopy_maps(results):
     fig = plt.figure(figsize=(22, 10))
     projection = ccrs.PlateCarree()
     
-    # VARIANCE MAP
     ax1 = fig.add_subplot(1, 2, 1, projection=projection)
     
     ax1.add_feature(cfeature.LAND, facecolor='#e8e8e8', edgecolor='black', linewidth=0.5)
@@ -305,7 +399,6 @@ def plot_cartopy_maps(results):
     
     ax1.set_title('Warm Season Temperature Variance', fontsize=14, weight='bold', pad=15)
     
-    # SKEWNESS MAP
     ax2 = fig.add_subplot(1, 2, 2, projection=projection)
     
     ax2.add_feature(cfeature.LAND, facecolor='#e8e8e8', edgecolor='black', linewidth=0.5)
@@ -345,13 +438,13 @@ def plot_cartopy_maps(results):
     year_range = "{}-{}".format(int(df['year_start'].min()), int(df['year_end'].max()))
     fig.suptitle(
         'NDBC Buoy Warm Season Temperature Statistics\n'
-        '{} Stations | Years: {} | +/-100 day warm season window'.format(n_buoys, year_range),
+        '{} Stations | Years: {} | ±{} day window (centered on peak temp)'.format(n_buoys, year_range, window_size),
         fontsize=16, weight='bold', y=0.98
     )
     
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     
-    output_path = os.path.join(FIGURES_DIR, 'cartopy_variance_skewness_maps.png')
+    output_path = os.path.join(FIGURES_DIR, 'West_Coast_cartopy_variance_skewness_maps.png')
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print("[SAVE] Saved: {}".format(output_path))
     
@@ -362,7 +455,7 @@ def plot_cartopy_maps(results):
 
 def print_summary_statistics(df):
     """Print summary statistics"""
-    print("\n[5/5] SUMMARY STATISTICS")
+    print("\nP5: SUMMARY STATISTICS")
     print("=" * 60)
     
     print("\nTotal stations plotted: {}".format(len(df)))
@@ -398,34 +491,30 @@ def main():
     start_time = datetime.now()
     
     try:
-        # Step 1: Discover buoys
-        all_buoys = discover_all_buoys_robust()
+        # Set to True to filter for US West Coast only
+        WEST_COAST_ONLY = True
+        
+        all_buoys = discover_all_buoys_robust(west_coast_only=WEST_COAST_ONLY)
         if not all_buoys:
             print("[ERROR] Failed to discover buoys. Exiting.")
             return
         
-        # Step 2: Filter buoys
-        valid_buoys = filter_buoys_by_years(all_buoys, min_years=5, max_workers=15)
+        valid_buoys = filter_buoys_by_years(all_buoys, min_years=5, target_count=TARGET_VALID_BUOYS, max_workers=15)
         if not valid_buoys:
             print("[ERROR] No buoys with sufficient data. Exiting.")
             return
-        
-        # Step 3: Process buoys
+
         results = process_all_buoys(valid_buoys, window_size=100)
         if not results:
             print("[ERROR] No successful buoy processing. Exiting.")
             return
-        
-        # Save results
+
         save_results(results)
-        
-        # Step 4: Create maps
-        df = plot_cartopy_maps(results)
-        
-        # Step 5: Print statistics
+
+        df = plot_cartopy_maps(results, window_size=100)
+
         print_summary_statistics(df)
-        
-        # Final summary
+
         elapsed = datetime.now() - start_time
         print("\n" + "=" * 60)
         print("[OK] PIPELINE COMPLETE!")

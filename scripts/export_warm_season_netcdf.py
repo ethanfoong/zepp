@@ -2,7 +2,7 @@
 Export warm-season anomaly NetCDFs for each station detected in the `cache/` directory
 or for a provided station list. Produces files in `nc/` and a summary variance PNG.
 
-Run: conda activate zepp; python scripts\export_warm_season_netcdf.py
+conda activate zepp; python scripts\export_warm_season_netcdf.py
 """
 from pathlib import Path
 import re

@@ -1,0 +1,138 @@
+C:\Users\ethan\Miniconda3\Lib\site-packages\pyproj\network.py:59: UserWarning: pyproj unable to set PROJ database path.
+  _set_context_ca_bundle_path(ca_bundle_path)
+[CACHE] Loaded 1918 station locations from cache
+[OK] Total buoy locations available: 1918
+[OK] US West Coast buoys available: 279
+[OK] US East Coast buoys available: 566
+
+
+=======================================================================
+      NDBC Buoy Average Anomaly Analysis Pipeline
+                                                                   
+  Compute max/min warm-season anomalies per buoy
+  Segment by coast and parallelize high/low processing
+  Creating NetCDF files and Cartopy visualizations
+=======================================================================
+
+
+P1: DISCOVERING CACHED BUOYS (OFFLINE)
+============================================================
+Found 195 warm NetCDF files total
+Found 187 unique stations with warm NetCDF
+Selected 120 stations with 5+ years from local cache
+
+ P3: PROCESSING BUOYS FOR EXTREME ANOMALIES
+============================================================
+Processing 120 buoys ╫ 2 anomaly types = 240 tasks
+
+
+ [Processing 41001 (max)...] 
+ [Processing 41001 (min)...] 
+ [Processing 41002 (max)...] 
+ [Processing 41002 (min)...] 
+ [Processing 41004 (max)...] 
+ [Processing 41004 (min)...] 
+ [Processing 41006 (max)...] 
+ [Processing 41006 (min)...] REUSED 41006_min_anomaly_15y.nc
+OK (avg=-3.631░C)
+
+ [Processing 41008 (max)...] REUSED 41001_min_anomaly_50y.nc
+OK (avg=-5.526░C)
+
+ [Processing 41008 (min)...] REUSED 41002_max_anomaly_53y.nc
+OK (avg=3.041░C)
+
+ [Processing 41009 (max)...] REUSED 41004_min_anomaly_48y.nc
+OK (avg=-6.773░C)
+
+ [Processing 41009 (min)...] REUSED 41006_max_anomaly_15y.nc
+OK (avg=2.179░C)
+
+ [Processing 41010 (max)...] REUSED 41001_max_anomaly_50y.nc
+OK (avg=3.796░C)
+
+ [Processing 41010 (min)...] REUSED 41002_min_anomaly_53y.nc
+OK (avg=-5.059░C)
+
+ [Processing 41012 (max)...] REUSED 41004_max_anomaly_48y.nc
+OK (avg=4.609░C)
+
+ [Processing 41012 (min)...] REUSED 41008_max_anomaly_38y.nc
+OK (avg=3.584░C)
+
+ [Processing 41013 (max)...] REUSED 41008_min_anomaly_38y.nc
+OK (avg=-5.840░C)
+
+ [Processing 41013 (min)...] REUSED 41009_max_anomaly_38y.nc
+OK (avg=2.945░C)
+
+ [Processing 41024 (max)...] REUSED 41010_min_anomaly_38y.nc
+OK (avg=-4.565░C)
+
+ [Processing 41024 (min)...] REUSED 41009_min_anomaly_38y.nc
+OK (avg=-6.074░C)
+
+ [Processing 41025 (max)...] REUSED 41010_max_anomaly_38y.nc
+OK (avg=2.476░C)
+
+ [Processing 41025 (min)...] REUSED 41013_max_anomaly_23y.nc
+OK (avg=5.725░C)
+
+ [Processing 41029 (max)...] REUSED 41012_min_anomaly_13y.nc
+OK (avg=-7.701░C)
+
+ [Processing 41029 (min)...] REUSED 41012_max_anomaly_13y.nc
+OK (avg=4.417░C)
+
+ [Processing 41033 (max)...] REUSED 41013_min_anomaly_23y.nc
+OK (avg=-7.363░C)
+
+ [Processing 41033 (min)...] REUSED 41024_max_anomaly_21y.nc
+OK (avg=3.112░C)
+
+ [Processing 41037 (max)...] REUSED 41024_min_anomaly_21y.nc
+OK (avg=-5.272░C)
+
+ [Processing 41037 (min)...] REUSED 41025_max_anomaly_23y.nc
+OK (avg=2.418░C)
+
+ [Processing 41038 (max)...] REUSED 41025_min_anomaly_23y.nc
+OK (avg=-4.176░C)
+
+ [Processing 41038 (min)...] REUSED 41029_max_anomaly_21y.nc
+OK (avg=5.285░C)
+
+ [Processing 41040 (max)...] REUSED 41029_min_anomaly_21y.nc
+OK (avg=-8.950░C)
+
+ [Processing 41040 (min)...] REUSED 41033_max_anomaly_21y.nc
+OK (avg=4.277░C)
+
+ [Processing 41041 (max)...] REUSED 41033_min_anomaly_21y.nc
+OK (avg=-6.778░C)
+
+ [Processing 41041 (min)...] REUSED 41037_max_anomaly_21y.nc
+OK (avg=4.360░C)
+
+ [Processing 41043 (max)...] REUSED 41037_min_anomaly_21y.nc
+OK (avg=-6.558░C)
+
+ [Processing 41043 (min)...] REUSED 41038_min_anomaly_21y.nc
+OK (avg=-7.483░C)
+
+ [Processing 41044 (max)...] REUSED 41038_max_anomaly_21y.nc
+OK (avg=5.772░C)
+
+ [Processing 41044 (min)...] REUSED 41040_max_anomaly_21y.nc
+OK (avg=0.916░C)
+
+ [Processing 41046 (max)...] REUSED 41040_min_anomaly_21y.nc
+OK (avg=-2.489░C)
+
+ [Processing 41046 (min)...] REUSED 41041_min_anomaly_17y.nc
+OK (avg=-2.277░C)
+
+ [Processing 41047 (max)...] REUSED 41041_max_anomaly_17y.nc
+OK (avg=1.042░C)
+
+ [Processing 41047 (min)...] 
